@@ -9,3 +9,12 @@ export interface Review {
   dislikes: number;
   images?: string[];
 }
+
+export interface PaginatedReviews {
+  reviews: Review[];
+  totalPages: number;
+  currentPage: number;
+  totalReviews: number;
+  pageKey?: string;
+  productId: string;
+}

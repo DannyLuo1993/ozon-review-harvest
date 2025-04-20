@@ -1,10 +1,10 @@
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { ReloadIcon, DownloadIcon } from '@radix-ui/react-icons';
-import { fetchReviews, exportToCSV, exportToJSON } from '@/services/reviewService';
+import { fetchReviews, exportToCSV, exportToJSON, parseOzonPaginationParams } from '@/services/reviewService';
 import { Review } from '@/types/review';
 import ReviewList from '@/components/ReviewList';
 import { useToast } from '@/hooks/use-toast';
@@ -14,7 +14,11 @@ const OzonReviewHarvester = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [reviews, setReviews] = useState<Review[]>([]);
+  const [allReviews, setAllReviews] = useState<Review[]>([]);
   const [productId, setProductId] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalReviews, setTotalReviews] = useState(0);
   const { toast } = useToast();
 
   const isValidOzonUrl = (url: string) => {
@@ -30,20 +34,69 @@ const OzonReviewHarvester = () => {
       return;
     }
 
+    // 重置状态
+    setReviews([]);
+    setAllReviews([]);
+    setCurrentPage(1);
+    setTotalPages(1);
+    setTotalReviews(0);
+    
+    // 获取第一页数据
+    await fetchPageData(url, 1);
+  };
+
+  const fetchPageData = async (baseUrl: string, page: number) => {
     setLoading(true);
     try {
-      const { reviews: fetchedReviews, productId: fetchedProductId } = await fetchReviews(url);
+      // 从URL中解析分页参数
+      const paginationParams = parseOzonPaginationParams(baseUrl);
+      
+      // 使用URL中的分页参数或使用指定的页码
+      const effectivePage = paginationParams.page || page;
+      
+      const { 
+        reviews: fetchedReviews, 
+        totalPages: fetchedTotalPages,
+        totalReviews: fetchedTotalReviews,
+        productId: fetchedProductId 
+      } = await fetchReviews(baseUrl, effectivePage);
+      
       setReviews(fetchedReviews);
+      setCurrentPage(effectivePage);
+      setTotalPages(fetchedTotalPages);
+      setTotalReviews(fetchedTotalReviews);
       setProductId(fetchedProductId);
+      
+      // 添加到所有评论集合
+      setAllReviews(prevReviews => {
+        // 创建新的评论集合，防止重复
+        const newAllReviews = [...prevReviews];
+        
+        // 将新评论添加到集合中（避免重复）
+        fetchedReviews.forEach(review => {
+          if (!newAllReviews.some(r => r.id === review.id)) {
+            newAllReviews.push(review);
+          }
+        });
+        
+        return newAllReviews;
+      });
+      
       toast({
         title: "抓取成功",
-        description: `已成功获取 ${fetchedReviews.length} 条评论`,
+        description: `已获取第 ${effectivePage} 页评论，共 ${fetchedTotalPages} 页`,
       });
+      
       setLoading(false);
     } catch (err) {
       setError('抓取评论失败，请重试');
       setLoading(false);
     }
+  };
+
+  const handlePageChange = (page: number) => {
+    if (page === currentPage || loading) return;
+    fetchPageData(url, page);
   };
 
   const handleExportCSV = () => {
@@ -56,11 +109,12 @@ const OzonReviewHarvester = () => {
       return;
     }
 
-    const csvContent = exportToCSV(reviews, productId);
+    // 导出所有已获取的评论，而不仅仅是当前页面的评论
+    const csvContent = exportToCSV(allReviews.length > 0 ? allReviews : reviews, productId);
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
+    const downloadUrl = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.href = url;
+    link.href = downloadUrl;
     link.setAttribute('download', `ozon-reviews-${productId}.csv`);
     document.body.appendChild(link);
     link.click();
@@ -68,7 +122,7 @@ const OzonReviewHarvester = () => {
 
     toast({
       title: "导出成功",
-      description: "已导出CSV文件",
+      description: `已导出 ${allReviews.length} 条评论到CSV文件`,
     });
   };
 
@@ -82,11 +136,12 @@ const OzonReviewHarvester = () => {
       return;
     }
 
-    const jsonContent = exportToJSON(reviews, productId);
+    // 导出所有已获取的评论，而不仅仅是当前页面的评论
+    const jsonContent = exportToJSON(allReviews.length > 0 ? allReviews : reviews, productId);
     const blob = new Blob([jsonContent], { type: 'application/json;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
+    const downloadUrl = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.href = url;
+    link.href = downloadUrl;
     link.setAttribute('download', `ozon-reviews-${productId}.json`);
     document.body.appendChild(link);
     link.click();
@@ -94,8 +149,66 @@ const OzonReviewHarvester = () => {
 
     toast({
       title: "导出成功",
-      description: "已导出JSON文件",
+      description: `已导出 ${allReviews.length} 条评论到JSON文件`,
     });
+  };
+
+  const fetchAllPages = async () => {
+    if (!productId || loading) return;
+    
+    setLoading(true);
+    toast({
+      title: "开始批量抓取",
+      description: "正在抓取所有页面的评论，请稍等...",
+    });
+    
+    try {
+      // 保存已抓取的页面数
+      let fetchedPages = 0;
+      
+      // 清空所有评论集合，重新开始
+      setAllReviews([]);
+      
+      // 批量抓取所有页面
+      for (let page = 1; page <= totalPages; page++) {
+        const { reviews: pageReviews } = await fetchReviews(url, page);
+        
+        fetchedPages++;
+        
+        // 更新所有评论集合
+        setAllReviews(prevReviews => {
+          const newAllReviews = [...prevReviews];
+          
+          pageReviews.forEach(review => {
+            if (!newAllReviews.some(r => r.id === review.id)) {
+              newAllReviews.push(review);
+            }
+          });
+          
+          return newAllReviews;
+        });
+        
+        // 如果是当前选中的页面，还需要更新显示的评论
+        if (page === currentPage) {
+          setReviews(pageReviews);
+        }
+        
+        // 更新进度提示
+        toast({
+          title: "抓取进度",
+          description: `已抓取 ${fetchedPages} / ${totalPages} 页评论`,
+        });
+      }
+      
+      toast({
+        title: "批量抓取完成",
+        description: `已成功抓取所有 ${totalPages} 页评论，共 ${totalReviews} 条`,
+      });
+    } catch (err) {
+      setError('批量抓取评论失败，请重试');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -144,15 +257,32 @@ const OzonReviewHarvester = () => {
 
       {reviews.length > 0 && (
         <div className="space-y-6">
-          <div className="flex justify-between items-center">
-            <h2 className="text-xl font-semibold">
-              评论数据 ({reviews.length})
-            </h2>
-            <div className="flex space-x-3">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div className="flex flex-col">
+              <h2 className="text-xl font-semibold">
+                评论数据 ({currentPage}/{totalPages} 页，共 {totalReviews} 条)
+              </h2>
+              <p className="text-sm text-gray-500">
+                当前显示: 第 {currentPage} 页 ({reviews.length} 条) | 已获取: {allReviews.length} 条
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <Button 
+                onClick={fetchAllPages} 
+                variant="outline" 
+                size="sm"
+                disabled={loading || totalPages <= 1}
+              >
+                {loading ? (
+                  <ReloadIcon className="mr-2 h-4 w-4 animate-spin" />
+                ) : null}
+                批量抓取所有页面
+              </Button>
               <Button 
                 onClick={handleExportCSV} 
                 variant="outline" 
                 size="sm"
+                disabled={loading}
               >
                 <DownloadIcon className="mr-2 h-4 w-4" />
                 导出 CSV
@@ -161,13 +291,21 @@ const OzonReviewHarvester = () => {
                 onClick={handleExportJSON} 
                 variant="outline" 
                 size="sm"
+                disabled={loading}
               >
                 <DownloadIcon className="mr-2 h-4 w-4" />
                 导出 JSON
               </Button>
             </div>
           </div>
-          <ReviewList reviews={reviews} loading={loading} />
+          
+          <ReviewList 
+            reviews={reviews} 
+            loading={loading} 
+            currentPage={currentPage}
+            totalPages={totalPages}
+            onPageChange={handlePageChange}
+          />
         </div>
       )}
 

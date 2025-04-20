@@ -1,13 +1,29 @@
 
-import { Review } from "../types/review";
+import { Review, PaginatedReviews } from "../types/review";
 
 // 模拟的抓取延迟
 const FETCH_DELAY = 1500;
 
-// 生成随机的评论数据
-const generateMockReviews = (count: number): Review[] => {
+// 每页评论数量
+const REVIEWS_PER_PAGE = 10;
+
+// 模拟的总评论数量 (实际情况会根据API返回的数据确定)
+const TOTAL_REVIEWS = 120;
+
+// 模拟的总页数
+const TOTAL_PAGES = Math.ceil(TOTAL_REVIEWS / REVIEWS_PER_PAGE);
+
+// 存储所有生成的评论
+let allReviews: Review[] = [];
+
+// 生成随机的评论数据 - 只在第一次调用时生成所有评论
+const generateAllMockReviews = (total: number): Review[] => {
+  if (allReviews.length > 0) {
+    return allReviews;
+  }
+
   const reviews: Review[] = [];
-  const authors = ["Александр", "Елена", "Иван", "Ольга", "Дмитрий", "Мария", "Сергей", "Анна"];
+  const authors = ["Александр", "Елена", "Иван", "Ольга", "Дмитрий", "Мария", "Сергей", "Анна", "Николай", "Татьяна", "Виктор", "Наталья"];
   const contents = [
     "Отличный товар! Всем рекомендую.",
     "Качество соответствует цене.",
@@ -16,10 +32,17 @@ const generateMockReviews = (count: number): Review[] => {
     "Очень довольна покупкой!",
     "Хорошее соотношение цены и качества.",
     "Нормальный товар, но есть некоторые недостатки.",
-    "Доставили быстро, качество отличное!"
+    "Доставили быстро, качество отличное!",
+    "Покупаю не первый раз, всегда доволен качеством.",
+    "Товар пришел с повреждениями, но это, скорее всего, вина доставки.",
+    "Работает как часы, очень хорошая модель.",
+    "Очень понравился дизайн и качество исполнения.",
+    "Хорошая вещь за свои деньги, рекомендую.",
+    "Цена немного завышена для такого качества.",
+    "Удобно пользоваться, интуитивно понятно."
   ];
 
-  for (let i = 0; i < count; i++) {
+  for (let i = 0; i < total; i++) {
     const randomAuthorIndex = Math.floor(Math.random() * authors.length);
     const randomContentIndex = Math.floor(Math.random() * contents.length);
     const randomRating = Math.floor(Math.random() * 5) + 1;
@@ -50,6 +73,10 @@ const generateMockReviews = (count: number): Review[] => {
     });
   }
 
+  // 按日期排序，最新的在前面
+  reviews.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  
+  allReviews = reviews;
   return reviews;
 };
 
@@ -59,16 +86,75 @@ const extractProductId = (url: string): string => {
   return matches ? matches[1] : "unknown-product";
 };
 
-// 模拟抓取评论数据
-export const fetchReviews = (url: string): Promise<{ reviews: Review[], productId: string }> => {
+// 解析URL中的page参数
+const extractPageParam = (url: string): number => {
+  const matches = url.match(/[?&]page=(\d+)/);
+  return matches ? parseInt(matches[1], 10) : 1;
+};
+
+// 解析URL中的page_key参数
+const extractPageKeyParam = (url: string): string | undefined => {
+  const matches = url.match(/[?&]page_key=([^&]+)/);
+  return matches ? matches[1] : undefined;
+};
+
+// 模拟抓取评论数据 (支持分页)
+export const fetchReviews = (url: string, page: number = 1): Promise<PaginatedReviews> => {
+  // 确保总评论已生成
+  if (allReviews.length === 0) {
+    generateAllMockReviews(TOTAL_REVIEWS);
+  }
+  
   return new Promise((resolve) => {
     setTimeout(() => {
       const productId = extractProductId(url);
-      const reviewCount = Math.floor(Math.random() * 30) + 10; // 10-40条评论
-      const reviews = generateMockReviews(reviewCount);
-      resolve({ reviews, productId });
+      
+      // 计算当前页面应显示的评论
+      const startIndex = (page - 1) * REVIEWS_PER_PAGE;
+      const endIndex = startIndex + REVIEWS_PER_PAGE;
+      const pageReviews = allReviews.slice(startIndex, endIndex);
+      
+      // 计算总页数
+      const totalPages = Math.ceil(allReviews.length / REVIEWS_PER_PAGE);
+      
+      // 如果我们提取到了page_key，可以用它作为分页标记
+      const pageKey = extractPageKeyParam(url);
+      
+      resolve({
+        reviews: pageReviews,
+        totalPages: totalPages,
+        currentPage: page,
+        totalReviews: allReviews.length,
+        pageKey: pageKey,
+        productId
+      });
     }, FETCH_DELAY);
   });
+};
+
+// 解析真实Ozon URL中的分页参数
+export const parseOzonPaginationParams = (url: string) => {
+  return {
+    page: extractPageParam(url),
+    pageKey: extractPageKeyParam(url)
+  };
+};
+
+// 构建用于下一页的Ozon URL
+export const buildNextPageUrl = (baseUrl: string, nextPage: number, pageKey?: string): string => {
+  // 移除现有的分页参数
+  let cleanUrl = baseUrl.replace(/[?&]page=\d+/, '').replace(/[?&]page_key=[^&]+/, '');
+  
+  // 添加新的分页参数
+  const separator = cleanUrl.includes('?') ? '&' : '?';
+  let nextUrl = `${cleanUrl}${separator}page=${nextPage}`;
+  
+  // 添加page_key (如果有)
+  if (pageKey) {
+    nextUrl += `&page_key=${pageKey}`;
+  }
+  
+  return nextUrl;
 };
 
 // 导出评论为CSV
