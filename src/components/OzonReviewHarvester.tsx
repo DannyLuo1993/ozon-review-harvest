@@ -19,6 +19,7 @@ const OzonReviewHarvester = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalReviews, setTotalReviews] = useState(0);
+  const [manualTotalPages, setManualTotalPages] = useState('');
   const { toast } = useToast();
 
   const isValidOzonUrl = (url: string) => {
@@ -63,7 +64,14 @@ const OzonReviewHarvester = () => {
       
       setReviews(fetchedReviews);
       setCurrentPage(effectivePage);
-      setTotalPages(fetchedTotalPages);
+      
+      // 如果手动设置了总页数，使用手动设置的值
+      if (manualTotalPages && parseInt(manualTotalPages) > 0) {
+        setTotalPages(parseInt(manualTotalPages));
+      } else {
+        setTotalPages(fetchedTotalPages);
+      }
+      
       setTotalReviews(fetchedTotalReviews);
       setProductId(fetchedProductId);
       
@@ -84,7 +92,7 @@ const OzonReviewHarvester = () => {
       
       toast({
         title: "抓取成功",
-        description: `已获取第 ${effectivePage} 页评论，共 ${fetchedTotalPages} 页`,
+        description: `已获取第 ${effectivePage} 页评论，共 ${manualTotalPages || fetchedTotalPages} 页`,
       });
       
       setLoading(false);
@@ -110,7 +118,7 @@ const OzonReviewHarvester = () => {
     }
 
     // 导出所有已获取的评论，而不仅仅是当前页面的评论
-    const csvContent = exportToCSV(allReviews.length > 0 ? allReviews : reviews, productId);
+    const csvContent = exportToCSV(allReviews, productId);
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const downloadUrl = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -137,7 +145,7 @@ const OzonReviewHarvester = () => {
     }
 
     // 导出所有已获取的评论，而不仅仅是当前页面的评论
-    const jsonContent = exportToJSON(allReviews.length > 0 ? allReviews : reviews, productId);
+    const jsonContent = exportToJSON(allReviews, productId);
     const blob = new Blob([jsonContent], { type: 'application/json;charset=utf-8;' });
     const downloadUrl = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -166,11 +174,16 @@ const OzonReviewHarvester = () => {
       // 保存已抓取的页面数
       let fetchedPages = 0;
       
+      // 使用手动设置的总页数（如果有）
+      const actualTotalPages = manualTotalPages && parseInt(manualTotalPages) > 0 
+        ? parseInt(manualTotalPages) 
+        : totalPages;
+      
       // 清空所有评论集合，重新开始
       setAllReviews([]);
       
       // 批量抓取所有页面
-      for (let page = 1; page <= totalPages; page++) {
+      for (let page = 1; page <= actualTotalPages; page++) {
         const { reviews: pageReviews } = await fetchReviews(url, page);
         
         fetchedPages++;
@@ -196,13 +209,13 @@ const OzonReviewHarvester = () => {
         // 更新进度提示
         toast({
           title: "抓取进度",
-          description: `已抓取 ${fetchedPages} / ${totalPages} 页评论`,
+          description: `已抓取 ${fetchedPages} / ${actualTotalPages} 页评论`,
         });
       }
       
       toast({
         title: "批量抓取完成",
-        description: `已成功抓取所有 ${totalPages} 页评论，共 ${totalReviews} 条`,
+        description: `已成功抓取所有 ${actualTotalPages} 页评论，共 ${allReviews.length} 条`,
       });
     } catch (err) {
       setError('批量抓取评论失败，请重试');
@@ -230,6 +243,21 @@ const OzonReviewHarvester = () => {
             onChange={(e) => setUrl(e.target.value)}
             className="w-full"
             required
+          />
+        </div>
+
+        <div className="space-y-2">
+          <label htmlFor="manualTotalPages" className="text-sm font-medium">
+            手动设置总页数 (可选，不设置将使用自动检测到的页数)
+          </label>
+          <Input
+            id="manualTotalPages"
+            type="number"
+            min="1"
+            placeholder="例如：50"
+            value={manualTotalPages}
+            onChange={(e) => setManualTotalPages(e.target.value)}
+            className="w-full"
           />
         </div>
 
@@ -285,7 +313,7 @@ const OzonReviewHarvester = () => {
                 disabled={loading}
               >
                 <DownloadIcon className="mr-2 h-4 w-4" />
-                导出 CSV
+                导出 CSV ({allReviews.length} 条)
               </Button>
               <Button 
                 onClick={handleExportJSON} 
@@ -294,7 +322,7 @@ const OzonReviewHarvester = () => {
                 disabled={loading}
               >
                 <DownloadIcon className="mr-2 h-4 w-4" />
-                导出 JSON
+                导出 JSON ({allReviews.length} 条)
               </Button>
             </div>
           </div>

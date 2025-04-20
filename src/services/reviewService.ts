@@ -8,7 +8,7 @@ const FETCH_DELAY = 1500;
 const REVIEWS_PER_PAGE = 10;
 
 // 模拟的总评论数量 (实际情况会根据API返回的数据确定)
-const TOTAL_REVIEWS = 120;
+const TOTAL_REVIEWS = 500; // 增加到500条，支持更多页数
 
 // 模拟的总页数
 const TOTAL_PAGES = Math.ceil(TOTAL_REVIEWS / REVIEWS_PER_PAGE);
